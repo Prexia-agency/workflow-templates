@@ -1,0 +1,37 @@
+name: 📊 Post-Deployment Audit
+
+on:
+  workflow_call:
+    inputs:
+      deployment-url:
+        description: 'Production URL to audit'
+        required: true
+        type: string
+
+jobs:
+  lighthouse-production:
+    name: Production Lighthouse Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Wait for deployment to stabilize
+        run: sleep 60
+
+      - name: Run Lighthouse CI (5 runs)
+        uses: treosh/lighthouse-ci-action@v11
+        with:
+          urls: |
+            ${{ inputs.deployment-url }}
+            ${{ inputs.deployment-url }}/about
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+          runs: 5
+
+      - name: Upload Lighthouse Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-production-results
+          path: .lighthouseci
+          retention-days: 30
