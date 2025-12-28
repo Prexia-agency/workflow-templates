@@ -1,0 +1,119 @@
+name: Test Deploy
+
+on:
+  workflow_call:
+    inputs:
+      deployment-url:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      enforce-performance:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: E2E Accessibility Performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.0.4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright
+        uses: actions/cache@v4.1.2
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      # ===== WAIT FOR DEPLOYMENT =====
+
+      - name: Wait for deployment
+        timeout-minutes: 8
+        run: |
+          URL="${{ inputs.deployment-url }}"
+          echo "Waiting for ${URL}..."
+          
+          for i in {1..48}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${URL}" 2>/dev/null || echo "000")
+            if [[ "${CODE}" =~ ^(200|301|302|304)$ ]]; then
+              echo "✅ Ready (HTTP ${CODE})"
+              sleep 10
+              exit 0
+            fi
+            echo "⏳ ${i}/48 - HTTP ${CODE}"
+            sleep 10
+          done
+          exit 1
+
+      # ===== E2E + ACCESSIBILITY =====
+
+      - name: Playwright E2E + WCAG tests
+        run: npx playwright test
+        env:
+          BASE_URL: ${{ inputs.deployment-url }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: test-results-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 30
+
+      # ===== LIGHTHOUSE =====
+
+      - name: Wait for stability
+        timeout-minutes: 5
+        run: |
+          URL="${{ inputs.deployment-url }}"
+          OK=0
+          for i in {1..30}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${URL}" 2>/dev/null || echo "000")
+            [[ "${CODE}" =~ ^(200|301|302|304)$ ]] && ((OK++)) || OK=0
+            [ ${OK} -ge 3 ] && exit 0
+            echo "⏳ ${i}/30 - streak ${OK}/3"
+            sleep 10
+          done
+          exit 1
+
+      - name: Lighthouse
+        uses: treosh/lighthouse-ci-action@12.1.0
+        with:
+          urls: ${{ inputs.deployment-url }}
+          runs: ${{ inputs.environment == 'production' && 5 || 3 }}
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+        continue-on-error: ${{ !inputs.enforce-performance }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 📊 Test Results (${{ inputs.environment }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ inputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**E2E + Accessibility:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.enforce-performance }}" = "true" ]; then
+            echo "**Lighthouse:** Enforced" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Lighthouse:** Informational" >> $GITHUB_STEP_SUMMARY
+          fi
