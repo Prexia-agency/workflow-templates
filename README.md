@@ -1,6 +1,6 @@
 # Prexia Workflows Templates
 
-**Enterprise-grade CI/CD for Next.js agencies**
+Enterprise-grade CI/CD for Next.js agencies
 
 Version: 2.0.0 (Tier-2 Optimized)  
 Last Updated: December 28, 2024
