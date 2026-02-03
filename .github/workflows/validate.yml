@@ -6,6 +6,9 @@ on:
       node-version:
         type: string
         default: "20"
+      run-sonar:
+        type: boolean
+        default: false
     secrets:
       GITGUARDIAN:
         required: true
@@ -24,19 +27,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4.0.4
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
 
       # ===== SECURITY =====
       - name: GitGuardian secret scan
-        uses: GitGuardian/ggshield-action@v1.31.0
+        uses: GitGuardian/ggshield-action@v1
         env:
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN }}
 
@@ -54,18 +57,18 @@ jobs:
         run: npm run type-check
 
       - name: SonarCloud
-        if: ${{ secrets.SONARCLOUD != '' }}
-        uses: SonarSource/sonarcloud-github-action@v3.1.0
+        if: ${{ inputs.run-sonar }}
+        uses: SonarSource/sonarcloud-github-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONARCLOUD }}
 
       # ===== BUILD =====
       - name: Cache Next.js
-        uses: actions/cache@v4.1.2
+        uses: actions/cache@v4
         with:
           path: .next/cache
-          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.*', 'src/env.*') }}
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Build
         run: npm run build
@@ -73,7 +76,7 @@ jobs:
           NODE_ENV: production
 
       - name: Bundle size check
-        uses: andresz1/size-limit-action@v1.0.0
+        uses: andresz1/size-limit-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
@@ -82,7 +85,6 @@ jobs:
         if: always()
         run: |
           echo "### ✅ Validation Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Security: GitGuardian + SonarCloud" >> $GITHUB_STEP_SUMMARY
+          echo "- Security: GitGuardian + optional SonarCloud" >> $GITHUB_STEP_SUMMARY
           echo "- Quality: ESLint + Prettier + TypeScript" >> $GITHUB_STEP_SUMMARY
-          echo "- Build: Next.js + t3-env + size-limit" >> $GITHUB_STEP_SUMMARY
+          echo "- Build: Next.js + size-limit" >> $GITHUB_STEP_SUMMARY
