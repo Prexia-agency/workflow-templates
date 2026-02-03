@@ -6,6 +6,11 @@ on:
       node-version:
         type: string
         default: "20"
+    secrets:
+      GITGUARDIAN:
+        required: true
+      SONARCLOUD:
+        required: false
 
 permissions:
   contents: read
@@ -16,6 +21,7 @@ jobs:
     name: Security Quality Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -29,14 +35,12 @@ jobs:
           cache: npm
 
       # ===== SECURITY =====
-      
       - name: GitGuardian secret scan
         uses: GitGuardian/ggshield-action@v1.31.0
         env:
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN }}
 
       # ===== CODE QUALITY =====
-      
       - name: Install dependencies
         run: npm ci
 
@@ -57,7 +61,6 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONARCLOUD }}
 
       # ===== BUILD =====
-
       - name: Cache Next.js
         uses: actions/cache@v4.1.2
         with:
