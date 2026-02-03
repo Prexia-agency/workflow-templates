@@ -84,6 +84,6 @@ jobs:
         if: always()
         run: |
           echo "### ✅ Validation Complete" >> $GITHUB_STEP_SUMMARY
-          echo "- Security: GitGuardian + optional SonarCloud" >> $GITHUB_STEP_SUMMARY
+          echo "- Security: Gitleaks secret scan" >> $GITHUB_STEP_SUMMARY
           echo "- Quality: ESLint + Prettier + TypeScript" >> $GITHUB_STEP_SUMMARY
           echo "- Build: Next.js + size-limit" >> $GITHUB_STEP_SUMMARY
