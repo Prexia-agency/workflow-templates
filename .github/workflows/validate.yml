@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
     secrets:
-    GITGUARDIAN:
+      GITGUARDIAN:
         required: true
       SONARCLOUD:
         required: false
