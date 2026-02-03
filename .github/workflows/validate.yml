@@ -38,10 +38,11 @@ jobs:
           cache: npm
 
       # ===== SECURITY =====
-      - name: GitGuardian secret scan
-        uses: GitGuardian/ggshield-action@v1
-        env:
-          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN }}
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source . --verbose --redact
+
 
       # ===== CODE QUALITY =====
       - name: Install dependencies
