@@ -104,6 +104,14 @@ jobs:
           uploadArtifacts: true
           temporaryPublicStorage: true
         continue-on-error: ${{ !inputs.enforce-performance }}
+        
+         # ===== OWASP ZAP SECURITY SCAN =====
+
+      - name: OWASP ZAP Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: ${{ inputs.deployment-url }}
+          cmd_options: "-a"
 
       - name: Summary
         if: always()
