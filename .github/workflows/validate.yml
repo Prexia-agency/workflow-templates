@@ -6,11 +6,6 @@ on:
       node-version:
         type: string
         default: "20"
-    secrets:
-      GITGUARDIAN_API_KEY:
-        required: true
-      SONAR_TOKEN:
-        required: false
 
 permissions:
   contents: read
@@ -38,7 +33,7 @@ jobs:
       - name: GitGuardian secret scan
         uses: GitGuardian/ggshield-action@v1.31.0
         env:
-          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN }}
 
       # ===== CODE QUALITY =====
       
@@ -55,11 +50,11 @@ jobs:
         run: npm run type-check
 
       - name: SonarCloud
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ secrets.SONARCLOUD != '' }}
         uses: SonarSource/sonarcloud-github-action@v3.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONARCLOUD }}
 
       # ===== BUILD =====
 
