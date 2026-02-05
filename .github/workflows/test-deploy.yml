@@ -83,13 +83,19 @@ jobs:
       # ===== LIGHTHOUSE =====
 
       - name: Lighthouse
+        id: lighthouse
         uses: treosh/lighthouse-ci-action@12.1.0
         with:
           urls: ${{ inputs.deployment-url }}
           runs: ${{ inputs.environment == 'production' && 5 || 3 }}
           uploadArtifacts: true
           temporaryPublicStorage: true
-        continue-on-error: ${{ !inputs.enforce-performance }}
+        continue-on-error: true
+      
+      - name: Fail if performance is enforced and Lighthouse failed
+        if: ${{ inputs.enforce-performance && steps.lighthouse.outcome == 'failure' }}
+        run: exit 1
+
         
          # ===== OWASP ZAP SECURITY SCAN =====
 
