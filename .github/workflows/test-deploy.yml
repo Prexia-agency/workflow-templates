@@ -119,12 +119,20 @@ jobs:
           
           echo "✅ Site is Lighthouse-ready"
       
-      # ===== INSTALL DEPENDENCIES =====
-      - name: Install Xvfb and Lighthouse
+      - name: Install Chromium, Xvfb and Lighthouse
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y \
+            xvfb \
+            chromium-browser \
+            chromium-chromedriver \
+            fonts-liberation \
+            libnss3 \
+            libatk-bridge2.0-0 \
+            libgtk-3-0 \
+            libgbm1
           npm install -g lighthouse@12.1.0
+
       
       # ===== RUN LIGHTHOUSE WITH HEADED CHROME =====
       - name: Run Lighthouse (headed Chrome with virtual display)
@@ -139,12 +147,14 @@ jobs:
           
           # Run Lighthouse
           lighthouse "${{ inputs.deployment-url }}" \
-            --output=json \
-            --output=html \
-            --output-path=./lighthouse-report \
-            --chrome-flags="--no-sandbox --disable-dev-shm-usage" \
-            --preset=desktop \
-            --quiet
+          --output=json \
+          --output=html \
+          --output-path=./lighthouse-report.report \
+          --preset=desktop \
+          --chrome-path=/usr/bin/chromium-browser \
+          --chrome-flags="--no-sandbox --disable-dev-shm-usage" \
+          --quiet
+
           
           echo "✅ Lighthouse completed successfully"
         continue-on-error: ${{ !inputs.enforce-performance }}
