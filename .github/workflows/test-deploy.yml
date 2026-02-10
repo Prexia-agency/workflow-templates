@@ -82,9 +82,8 @@ jobs:
   lighthouse:
     name: Lighthouse Performance
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Run in parallel, but wait for deployment check
-    needs: []  # Independent
+    timeout-minutes: 15
+    needs: []
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -120,43 +119,70 @@ jobs:
           
           echo "✅ Site is Lighthouse-ready"
       
-      # ===== EXTRACT SITEMAP =====
-      - name: Get sitemap URLs
-        id: sitemap
+      # ===== INSTALL DEPENDENCIES =====
+      - name: Install Xvfb and Lighthouse
         run: |
-          SITEMAP_URL="${{ inputs.deployment-url }}/sitemap.xml"
-          
-          # Extract URLs, limit to key pages
-          URLS=$(curl -sL "$SITEMAP_URL" | \
-            grep -oP '(?<=<loc>)[^<]+' | \
-            head -n 1)  # Test homepage only
-          
-          echo "urls<<EOF" >> $GITHUB_OUTPUT
-          echo "$URLS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "📍 Testing URLs:"
-          echo "$URLS"
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          npm install -g lighthouse@12.1.0
       
-      # ===== LIGHTHOUSE =====
-      - name: Lighthouse CI
+      # ===== RUN LIGHTHOUSE WITH HEADED CHROME =====
+      - name: Run Lighthouse (headed Chrome with virtual display)
         id: lighthouse
-        uses: treosh/lighthouse-ci-action@12.1.0
-        with:
-          urls: ${{ steps.sitemap.outputs.urls }}
-          uploadArtifacts: true
-          temporaryPublicStorage: true
-          configPath: './.lighthouserc.json'
+        run: |
+          # Start virtual display
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+          
+          # Wait for display to be ready
+          sleep 3
+          
+          # Run Lighthouse
+          lighthouse "${{ inputs.deployment-url }}" \
+            --output=json \
+            --output=html \
+            --output-path=./lighthouse-report \
+            --chrome-flags="--no-sandbox --disable-dev-shm-usage" \
+            --preset=desktop \
+            --quiet
+          
+          echo "✅ Lighthouse completed successfully"
         continue-on-error: ${{ !inputs.enforce-performance }}
-
       
+      # ===== CHECK LIGHTHOUSE SCORES =====
+      - name: Check Lighthouse scores
+        if: always() && steps.lighthouse.outcome == 'success'
+        run: |
+          # Extract scores from JSON report
+          ACCESSIBILITY=$(jq '.categories.accessibility.score * 100' lighthouse-report.report.json)
+          BEST_PRACTICES=$(jq '."best-practices".score * 100' lighthouse-report.report.json 2>/dev/null || echo "0")
+          SEO=$(jq '.categories.seo.score * 100' lighthouse-report.report.json)
+          
+          echo "📊 Lighthouse Scores:"
+          echo "  Accessibility: ${ACCESSIBILITY}%"
+          echo "  Best Practices: ${BEST_PRACTICES}%"
+          echo "  SEO: ${SEO}%"
+          
+          # Fail if scores are below thresholds (only if enforcement enabled)
+          if [ "${{ inputs.enforce-performance }}" = "true" ]; then
+            if (( $(echo "$ACCESSIBILITY < 90" | bc -l) )); then
+              echo "❌ Accessibility score too low: ${ACCESSIBILITY}%"
+              exit 1
+            fi
+            if (( $(echo "$SEO < 90" | bc -l) )); then
+              echo "❌ SEO score too low: ${SEO}%"
+              exit 1
+            fi
+          fi
+      
+      # ===== UPLOAD RESULTS =====
       - name: Upload Lighthouse results
         if: always()
         uses: actions/upload-artifact@v4.4.3
         with:
           name: lighthouse-results-${{ inputs.environment }}-${{ github.run_id }}
           path: |
-            .lighthouseci/
+            lighthouse-report.*
           retention-days: 30
       
       - name: Fail if performance enforcement enabled
@@ -170,7 +196,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: []  # Independent
+    needs: []
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -195,7 +221,7 @@ jobs:
         with:
           target: ${{ inputs.deployment-url }}
           cmd_options: "-a"
-        continue-on-error: true  # Informational only
+        continue-on-error: true
 
   # ===== JOB 4: SUMMARY (AFTER ALL) =====
   summary:
