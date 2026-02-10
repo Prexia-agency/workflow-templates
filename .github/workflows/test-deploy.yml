@@ -144,11 +144,11 @@ jobs:
         uses: treosh/lighthouse-ci-action@12.1.0
         with:
           urls: ${{ steps.sitemap.outputs.urls }}
-          runs: ${{ inputs.enforce-performance && inputs.environment == 'production' && 3 || 1 }}
           uploadArtifacts: true
           temporaryPublicStorage: true
           configPath: './.lighthouserc.json'
         continue-on-error: ${{ !inputs.enforce-performance }}
+
       
       - name: Upload Lighthouse results
         if: always()
