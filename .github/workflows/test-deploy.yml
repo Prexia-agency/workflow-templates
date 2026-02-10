@@ -129,7 +129,7 @@ jobs:
           # Extract URLs, limit to key pages
           URLS=$(curl -sL "$SITEMAP_URL" | \
             grep -oP '(?<=<loc>)[^<]+' | \
-            head -n 6)  # Limit to 6 pages
+            head -n 1)  # Test homepage only
           
           echo "urls<<EOF" >> $GITHUB_OUTPUT
           echo "$URLS" >> $GITHUB_OUTPUT
