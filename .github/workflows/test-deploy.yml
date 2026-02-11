@@ -149,7 +149,7 @@ jobs:
           lighthouse "${{ inputs.deployment-url }}" \
           --output=json \
           --output=html \
-          --output-path=./lighthouse-report.report \
+          --output-path=./lighthouse-report \
           --preset=desktop \
           --chrome-path=/usr/bin/chromium-browser \
           --chrome-flags="--no-sandbox --disable-dev-shm-usage" \
