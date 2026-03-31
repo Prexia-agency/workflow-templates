@@ -2,9 +2,6 @@ name: Test Deploy
 on:
   workflow_call:
     inputs:
-      deployment-url:
-        required: true
-        type: string
       environment:
         required: true
         type: string
@@ -14,60 +11,64 @@ on:
 
 permissions:
   contents: read
+  deployments: read
 
 jobs:
-  # ===== JOB 1: E2E + ACCESSIBILITY (GATES DEPLOYMENT) =====
   e2e-accessibility:
     name: E2E & Accessibility Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      deployment-url: ${{ steps.wait_for_deployment.outputs.url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
-      
+
+      - name: Resolve workflow source
+        id: workflow_source
+        shell: bash
+        run: |
+          WORKFLOW_REF="${{ github.workflow_ref }}"
+          echo "repository=${WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${WORKFLOW_REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow templates
+        uses: actions/checkout@v4.2.2
+        with:
+          repository: ${{ steps.workflow_source.outputs.repository }}
+          ref: ${{ steps.workflow_source.outputs.ref }}
+          path: .github/workflow-templates
+
       - name: Setup Node.js
         uses: actions/setup-node@v4.0.4
         with:
           node-version: "20"
           cache: npm
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Cache Playwright
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      
+
       - name: Install Playwright
         run: npx playwright install --with-deps chromium
-      
-      # ===== WAIT FOR DEPLOYMENT =====
-      - name: Wait for deployment
-        timeout-minutes: 8
-        run: |
-          URL="${{ inputs.deployment-url }}"
-          echo "Waiting for ${URL}..."
-          
-          for i in {1..48}; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${URL}" 2>/dev/null || echo "000")
-            if [[ "${CODE}" =~ ^(200|301|302|304)$ ]]; then
-              echo "✅ Ready (HTTP ${CODE})"
-              sleep 10
-              exit 0
-            fi
-            echo "⏳ ${i}/48 - HTTP ${CODE}"
-            sleep 10
-          done
-          exit 1
-      
-      # ===== E2E + ACCESSIBILITY =====
+
+      - name: Wait for Vercel deployment
+        id: wait_for_deployment
+        uses: ./.github/workflow-templates/.github/actions/wait-for-vercel
+        with:
+          environment: ${{ (inputs.environment == 'production' || inputs.environment == 'Production') && 'Production' || 'Preview' }}
+          github-token: ${{ github.token }}
+
       - name: Playwright E2E + WCAG tests
         run: npx playwright test
         env:
-          BASE_URL: ${{ inputs.deployment-url }}
-      
+          BASE_URL: ${{ steps.wait_for_deployment.outputs.url }}
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4.4.3
@@ -78,24 +79,42 @@ jobs:
             test-results/
           retention-days: 30
 
-  # ===== JOB 2: LIGHTHOUSE (PARALLEL, INFORMATIONAL) =====
   lighthouse:
     name: Lighthouse Performance
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: []
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
-      
-      # ===== WAIT FOR DEPLOYMENT + WARMUP =====
+
+      - name: Resolve workflow source
+        id: workflow_source
+        shell: bash
+        run: |
+          WORKFLOW_REF="${{ github.workflow_ref }}"
+          echo "repository=${WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${WORKFLOW_REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow templates
+        uses: actions/checkout@v4.2.2
+        with:
+          repository: ${{ steps.workflow_source.outputs.repository }}
+          ref: ${{ steps.workflow_source.outputs.ref }}
+          path: .github/workflow-templates
+
+      - name: Wait for Vercel deployment
+        id: wait_for_deployment
+        uses: ./.github/workflow-templates/.github/actions/wait-for-vercel
+        with:
+          environment: ${{ (inputs.environment == 'production' || inputs.environment == 'Production') && 'Production' || 'Preview' }}
+          github-token: ${{ github.token }}
+
       - name: Wait for deployment and warm up
         timeout-minutes: 10
         run: |
-          URL="${{ inputs.deployment-url }}"
+          URL="${{ steps.wait_for_deployment.outputs.url }}"
           echo "Waiting for ${URL} and warming up..."
-          
-          # Wait for HTTP ready
+
           for i in {1..48}; do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" "${URL}" 2>/dev/null || echo "000")
             if [[ "${CODE}" =~ ^(200|301|302|304)$ ]]; then
@@ -105,20 +124,18 @@ jobs:
             echo "⏳ ${i}/48 - HTTP ${CODE}"
             sleep 10
           done
-          
-          # Warm up: Make 3 requests to prime cache, lambdas, CDN
+
           echo "🔥 Warming up site..."
           for i in {1..3}; do
             curl -s "${URL}" > /dev/null
             sleep 5
           done
-          
-          # Final stabilization wait
+
           echo "⏸️  Stabilization period..."
           sleep 30
-          
+
           echo "✅ Site is Lighthouse-ready"
-      
+
       - name: Install Chromium, Xvfb and Lighthouse
         run: |
           sudo apt-get update
@@ -133,20 +150,14 @@ jobs:
             libgbm1
           npm install -g lighthouse@12.1.0
 
-      
-      # ===== RUN LIGHTHOUSE WITH HEADED CHROME =====
       - name: Run Lighthouse (headed Chrome with virtual display)
         id: lighthouse
         run: |
-          # Start virtual display
           export DISPLAY=:99
           Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
-          
-          # Wait for display to be ready
           sleep 3
-          
-          # Run Lighthouse
-          lighthouse "${{ inputs.deployment-url }}" \
+
+          lighthouse "${{ steps.wait_for_deployment.outputs.url }}" \
           --output=json \
           --output=html \
           --output-path=./lighthouse-report \
@@ -155,25 +166,21 @@ jobs:
           --chrome-flags="--no-sandbox --disable-dev-shm-usage" \
           --quiet
 
-          
           echo "✅ Lighthouse completed successfully"
         continue-on-error: ${{ !inputs.enforce-performance }}
-      
-      # ===== CHECK LIGHTHOUSE SCORES =====
+
       - name: Check Lighthouse scores
         if: always() && steps.lighthouse.outcome == 'success'
         run: |
-          # Extract scores from JSON report
           ACCESSIBILITY=$(jq '.categories.accessibility.score * 100' lighthouse-report.report.json)
           BEST_PRACTICES=$(jq '."best-practices".score * 100' lighthouse-report.report.json 2>/dev/null || echo "0")
           SEO=$(jq '.categories.seo.score * 100' lighthouse-report.report.json)
-          
+
           echo "📊 Lighthouse Scores:"
           echo "  Accessibility: ${ACCESSIBILITY}%"
           echo "  Best Practices: ${BEST_PRACTICES}%"
           echo "  SEO: ${SEO}%"
-          
-          # Fail if scores are below thresholds (only if enforcement enabled)
+
           if [ "${{ inputs.enforce-performance }}" = "true" ]; then
             if (( $(echo "$ACCESSIBILITY < 90" | bc -l) )); then
               echo "❌ Accessibility score too low: ${ACCESSIBILITY}%"
@@ -184,8 +191,7 @@ jobs:
               exit 1
             fi
           fi
-      
-      # ===== UPLOAD RESULTS =====
+
       - name: Upload Lighthouse results
         if: always()
         uses: actions/upload-artifact@v4.4.3
@@ -194,57 +200,24 @@ jobs:
           path: |
             lighthouse-report.*
           retention-days: 30
-      
+
       - name: Fail if performance enforcement enabled
         if: ${{ inputs.enforce-performance && steps.lighthouse.outcome == 'failure' }}
         run: |
           echo "❌ Lighthouse failed and enforce-performance is enabled"
           exit 1
 
-  # ===== JOB 3: SECURITY SCAN (PARALLEL, INFORMATIONAL) =====
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: []
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4.2.2
-      
-      - name: Wait for deployment
-        timeout-minutes: 8
-        run: |
-          URL="${{ inputs.deployment-url }}"
-          for i in {1..48}; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${URL}" 2>/dev/null || echo "000")
-            if [[ "${CODE}" =~ ^(200|301|302|304)$ ]]; then
-              echo "✅ Ready"
-              sleep 10
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
-      
-      - name: OWASP ZAP Scan
-        uses: zaproxy/action-full-scan@v0.10.0
-        with:
-          target: ${{ inputs.deployment-url }}
-          cmd_options: "-a"
-        continue-on-error: true
-
-  # ===== JOB 4: SUMMARY (AFTER ALL) =====
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
     if: always()
-    needs: [e2e-accessibility, lighthouse, security]
+    needs: [e2e-accessibility, lighthouse]
     steps:
       - name: Generate Summary
         run: |
           echo "# 📊 Test Results: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**URL:** ${{ inputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ needs.e2e-accessibility.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -252,9 +225,8 @@ jobs:
           echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| E2E + Accessibility | ${{ needs.e2e-accessibility.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Lighthouse | ${{ needs.lighthouse.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Security Scan | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ "${{ inputs.enforce-performance }}" = "true" ]; then
             echo "⚠️ **Performance enforcement:** ENABLED" >> $GITHUB_STEP_SUMMARY
           else

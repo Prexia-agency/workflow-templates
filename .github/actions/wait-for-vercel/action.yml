@@ -1,0 +1,71 @@
+name: Wait for Vercel Deployment
+description: >
+  Polls the GitHub Deployments API until Vercel marks the target environment
+  as successfully deployed, then outputs the preview/production URL.
+  Uses the PR head SHA (not the synthetic merge commit SHA) so the lookup
+  matches what Vercel actually registers.
+
+inputs:
+  environment:
+    description: 'Vercel environment label to wait for - "Preview" or "Production"'
+    required: false
+    default: 'Preview'
+  github-token:
+    description: 'GitHub token for Deployments API calls'
+    required: true
+
+outputs:
+  url:
+    description: 'The environment_url Vercel set on the successful deployment status'
+    value: ${{ steps.poll.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Poll for Vercel deployment
+      id: poll
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        DEPLOY_ENV: ${{ inputs.environment }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const environment = process.env.DEPLOY_ENV;
+          // In pull_request events context.sha is the synthetic merge commit SHA,
+          // not the branch HEAD that Vercel actually registers its deployment against.
+          // Fall back to context.sha for push-to-main (production) runs.
+          const sha = context.payload.pull_request?.head?.sha ?? context.sha;
+          const maxAttempts = 30; // 30 x 10 s = 5 min timeout
+          const delayMs = 10_000;
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const { data: deployments } = await github.rest.repos.listDeployments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              environment,
+              per_page: 5,
+            });
+
+            for (const deployment of deployments) {
+              const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deployment.id,
+                per_page: 5,
+              });
+
+              // Statuses are newest-first; first success with a URL wins
+              const success = statuses.find(s => s.state === 'success' && s.environment_url);
+              if (success) {
+                core.setOutput('url', success.environment_url);
+                core.info(`OK ${environment} deployment ready: ${success.environment_url}`);
+                return;
+              }
+            }
+
+            core.info(`Attempt ${attempt}/${maxAttempts}: ${environment} deployment not ready - waiting ${delayMs / 1000}s...`);
+            await new Promise(r => setTimeout(r, delayMs));
+          }
+
+          core.setFailed(`Timed out waiting for Vercel ${environment} deployment after 5 minutes`);

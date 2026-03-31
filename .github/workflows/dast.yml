@@ -1,0 +1,45 @@
+name: DAST
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  zap:
+    name: ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve workflow source
+        id: workflow_source
+        shell: bash
+        run: |
+          WORKFLOW_REF="${{ github.workflow_ref }}"
+          echo "repository=${WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${WORKFLOW_REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout workflow templates
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ steps.workflow_source.outputs.repository }}
+          ref: ${{ steps.workflow_source.outputs.ref }}
+          path: .github/workflow-templates
+
+      - name: Wait for Vercel Deployment
+        id: vercel-url
+        uses: ./.github/workflow-templates/.github/actions/wait-for-vercel
+        with:
+          environment: Preview
+          github-token: ${{ github.token }}
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@6c5a007541891231cd9e0ddec25d4f25c59c9874 # v0.15.0
+        with:
+          target: ${{ steps.vercel-url.outputs.url }}
+          fail_action: false
+          allow_issue_writing: false
+          artifact_name: zap-report

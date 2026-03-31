@@ -9,7 +9,7 @@ Last Updated: December 28, 2024
 
 ##  Philosophy
 
-**2 workflows. 13 files. Zero compromise.**
+**3 workflows. Zero compromise.**
 
 This is not a minimal setup. This is an **optimized enterprise setup** that combines related stages intelligently while maintaining full coverage.
 
@@ -41,6 +41,16 @@ This is not a minimal setup. This is an **optimized enterprise setup** that comb
 - Lighthouse performance audit
 - Artifact uploads
 
+### 3. `dast.yml`
+**Combines:** Deployment wait + Passive DAST
+**Duration:** ~5 minutes
+**Blocks:** No
+
+**What it does:**
+- Waits for Vercel preview deployment
+- Runs ZAP baseline passive scan
+- Reports common OWASP misconfigurations without blocking PRs
+
 ---
 
 ##  Usage
@@ -58,9 +68,12 @@ jobs:
     needs: validate
     uses: prexia/workflows-templates/.github/workflows/test-deploy.yml@v2.0.0
     with:
-      deployment-url: ${{ needs.wait-vercel.outputs.url }}
       environment: preview
       enforce-performance: false
+
+  dast-preview:
+    needs: validate
+    uses: prexia/workflows-templates/.github/workflows/dast.yml@v2.0.0
 ```
 
 ---
