@@ -4,6 +4,8 @@ description: >
   as successfully deployed, then outputs the preview/production URL.
   Uses the PR head SHA (not the synthetic merge commit SHA) so the lookup
   matches what Vercel actually registers.
+  For Production environments, resolves the clean production alias via the
+  Vercel API to avoid X-Robots-Tag: noindex on hash deployment URLs.
 
 inputs:
   environment:
@@ -13,10 +15,17 @@ inputs:
   github-token:
     description: 'GitHub token for Deployments API calls'
     required: true
+  vercel-token:
+    description: >
+      Vercel API token. When provided and environment is Production, the action
+      resolves the clean production alias instead of the hash deployment URL,
+      preventing X-Robots-Tag: noindex from failing Lighthouse SEO audits.
+    required: false
+    default: ''
 
 outputs:
   url:
-    description: 'The environment_url Vercel set on the successful deployment status'
+    description: 'The resolved deployment URL — production alias when available, hash URL otherwise'
     value: ${{ steps.poll.outputs.url }}
 
 runs:
@@ -27,10 +36,12 @@ runs:
       uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
       env:
         DEPLOY_ENV: ${{ inputs.environment }}
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const environment = process.env.DEPLOY_ENV;
+          const vercelToken = process.env.VERCEL_TOKEN;
           // In pull_request events context.sha is the synthetic merge commit SHA,
           // not the branch HEAD that Vercel actually registers its deployment against.
           // Fall back to context.sha for push-to-main (production) runs.
@@ -57,11 +68,50 @@ runs:
 
               // Statuses are newest-first; first success with a URL wins
               const success = statuses.find(s => s.state === 'success' && s.environment_url);
-              if (success) {
-                core.setOutput('url', success.environment_url);
-                core.info(`OK ${environment} deployment ready: ${success.environment_url}`);
-                return;
+              if (!success) continue;
+
+              const hashUrl = success.environment_url;
+
+              // For Production, resolve the clean alias via Vercel API to avoid
+              // X-Robots-Tag: noindex on hash deployment URLs (which tanks SEO audits).
+              if (environment === 'Production' && vercelToken) {
+                try {
+                  const hostname = hashUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+                  const res = await fetch(
+                    `https://api.vercel.com/v13/deployments?url=${encodeURIComponent(hostname)}`,
+                    { headers: { Authorization: `Bearer ${vercelToken}` } },
+                  );
+
+                  if (res.ok) {
+                    const json = await res.json();
+                    const aliases = json.deployments?.[0]?.alias ?? [];
+
+                    // Prefer custom domains; fall back to a clean .vercel.app alias.
+                    // Both passes exclude the original hash URL.
+                    const cleanAlias =
+                      aliases.find(a => !a.includes(hostname) && !a.endsWith('.vercel.app')) ||
+                      aliases.find(a => !a.includes(hostname));
+
+                    if (cleanAlias) {
+                      const resolvedUrl = cleanAlias.startsWith('http')
+                        ? cleanAlias
+                        : `https://${cleanAlias}`;
+                      core.info(`Resolved production alias: ${resolvedUrl} (hash: ${hashUrl})`);
+                      core.setOutput('url', resolvedUrl);
+                      return;
+                    }
+                    core.warning(`No clean alias found; aliases: ${JSON.stringify(aliases)}. Falling back to hash URL.`);
+                  } else {
+                    core.warning(`Vercel API ${res.status}. Falling back to hash URL.`);
+                  }
+                } catch (err) {
+                  core.warning(`Vercel alias resolution failed: ${err.message}. Falling back to hash URL.`);
+                }
               }
+
+              core.setOutput('url', hashUrl);
+              core.info(`OK ${environment} deployment ready: ${hashUrl}`);
+              return;
             }
 
             core.info(`Attempt ${attempt}/${maxAttempts}: ${environment} deployment not ready - waiting ${delayMs / 1000}s...`);
