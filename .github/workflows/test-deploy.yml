@@ -8,6 +8,9 @@ on:
       enforce-performance:
         type: boolean
         default: false
+    secrets:
+      VERCEL_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -63,6 +66,7 @@ jobs:
         with:
           environment: ${{ (inputs.environment == 'production' || inputs.environment == 'Production') && 'Production' || 'Preview' }}
           github-token: ${{ github.token }}
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
 
       - name: Playwright E2E + WCAG tests
         run: npx playwright test
@@ -108,6 +112,7 @@ jobs:
         with:
           environment: ${{ (inputs.environment == 'production' || inputs.environment == 'Production') && 'Production' || 'Preview' }}
           github-token: ${{ github.token }}
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
 
       - name: Wait for deployment and warm up
         timeout-minutes: 10
@@ -173,7 +178,7 @@ jobs:
         if: always() && steps.lighthouse.outcome == 'success'
         run: |
           ACCESSIBILITY=$(jq '.categories.accessibility.score * 100' lighthouse-report.report.json)
-          BEST_PRACTICES=$(jq '."best-practices".score * 100' lighthouse-report.report.json 2>/dev/null || echo "0")
+          BEST_PRACTICES=$(jq '.categories["best-practices"].score * 100' lighthouse-report.report.json 2>/dev/null || echo "0")
           SEO=$(jq '.categories.seo.score * 100' lighthouse-report.report.json)
 
           echo "📊 Lighthouse Scores:"
